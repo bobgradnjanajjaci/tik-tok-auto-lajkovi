@@ -6,6 +6,7 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# 🧠 SIGNATURE TOKENS — gotovo nemoguće da ih ima tuđi komentar zajedno
 SIGNATURE_TOKENS = [
     "encrypted",
     "money",
@@ -14,8 +15,7 @@ SIGNATURE_TOKENS = [
     "rothwell",
 ]
 
-EXACT_TITLE = "encrypted money code by ethan rothwell"
-
+# 🥈 FRAZE koje se konstantno ponavljaju u tvojim komentarima
 POWER_PHRASES = [
     "changed my life",
     "it changed my life",
@@ -24,6 +24,7 @@ POWER_PHRASES = [
     "need right now",
     "game changer",
     "another level",
+    "read encrypted money code",
     "hidden information",
     "not random",
     "plot twist",
@@ -42,7 +43,12 @@ def normalize(text: str) -> str:
 
 def expand_url(url: str) -> str:
     try:
-        r = requests.get(url, headers=HEADERS, allow_redirects=True, timeout=10)
+        r = requests.get(
+            url,
+            headers=HEADERS,
+            allow_redirects=True,
+            timeout=10
+        )
         return r.url
     except Exception:
         return url
@@ -57,7 +63,7 @@ def fetch_comments(video_id: str):
     comments = []
     cursor = 0
 
-    for _ in range(8):  # ⬅️ povećano na 400 komentara
+    for _ in range(5):  # do 250 komentara
         params = {
             "aid": 1988,
             "count": 50,
@@ -72,6 +78,7 @@ def fetch_comments(video_id: str):
                 params=params,
                 timeout=10
             )
+
             if r.status_code != 200:
                 break
 
@@ -90,22 +97,17 @@ def fetch_comments(video_id: str):
 
 
 def score_comment(text_norm: str) -> int:
+    """
+    Score koliko je vjerovatno da je komentar tvoj (Encrypted Money Code)
+    """
     score = 0
 
-    # 🥇 EXACT TITLE – NE MOŽE PROMAŠITI
-    if EXACT_TITLE in text_norm:
-        score += 300
-
+    # 🥇 PRIORITET 1 — signature tokens
     token_hits = sum(1 for t in SIGNATURE_TOKENS if t in text_norm)
-
-    # 🔹 3/5 tokena ali mora imati encrypted + money
-    if token_hits >= 3 and "encrypted" in text_norm and "money" in text_norm:
-        score += 120 + token_hits * 15
-
-    # 🔹 stari strong case
     if token_hits >= 4:
-        score += 150 + token_hits * 20
+        score += 120 + token_hits * 15  # vrlo jak signal
 
+    # 🥈 PRIORITET 2 — power phrases
     for p in POWER_PHRASES:
         if p in text_norm:
             score += 25
@@ -132,8 +134,6 @@ def find_target_comment(video_url: str) -> dict:
     best_score = 0
     top_likes = 0
 
-    fallback_candidates = []
-
     for c in comments:
         text = c.get("text") or ""
         likes = int(c.get("digg_count") or 0)
@@ -141,9 +141,6 @@ def find_target_comment(video_url: str) -> dict:
 
         top_likes = max(top_likes, likes)
         score = score_comment(text_norm)
-
-        if "encrypted money code" in text_norm:
-            fallback_candidates.append((likes, c))
 
         if score > 0:
             if (
@@ -158,16 +155,6 @@ def find_target_comment(video_url: str) -> dict:
                     "text": text,
                 }
                 best_score = score
-
-    # 🔥 LAST RESORT FALLBACK
-    if not best and fallback_candidates:
-        likes, c = max(fallback_candidates, key=lambda x: x[0])
-        best = {
-            "cid": c.get("cid"),
-            "likes": likes,
-            "username": c.get("user", {}).get("unique_id"),
-            "text": c.get("text"),
-        }
 
     if not best:
         return {"found": False}
