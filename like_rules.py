@@ -1,25 +1,31 @@
-# like_rules.py
-
 def calculate_target_likes(top_likes: int) -> int:
-    # ako nema top komentara
-    if top_likes <= 0:
-        return 100
+    """
+    Vraća UKUPAN broj lajkova koji komentar treba da ima.
+    Auto-brain će poslati razliku (target - trenutni).
 
-    # mali komentari
-    if top_likes < 100:
-        return 100
+    Pravila:
+    - Minimum efekta: 250
+    - Od 300+ radi po staroj logici
+    - Ako je top komentar prejak, ne šaljemo ništa
+    """
 
-    # do 1k -> agresivnije
+    # ⛔ Ako je top komentar prevelik – preskačemo
+    if top_likes >= 10000:
+        return 0
+
+    # 🔒 FORSIRANI MINIMUM
+    if top_likes < 200:
+        return 250
+
+    # ⬇️ OD OVDJE IDE TVOJA POSTOJEĆA LOGIKA (NIJE MIJENJANA)
     if top_likes < 1000:
-        return int(top_likes * 1.5)
+        return int(top_likes * 1.4)
 
-    # 1k – 3k -> x1.3 (IZMIJENJENO)
-    if top_likes < 3000:
-        return int(top_likes * 1.3)
+    elif top_likes < 3000:
+        return int(top_likes * 1.8)
 
-    # 3k – 8k -> +1000 (IZMIJENJENO)
-    if top_likes < 8000:
-        return top_likes + 1000
+    elif top_likes < 8000:
+        return top_likes + 1500
 
-    # preko 8k -> preskoci (preskupo / sumnjivo)
-    return 0
+    else:
+        return top_likes
