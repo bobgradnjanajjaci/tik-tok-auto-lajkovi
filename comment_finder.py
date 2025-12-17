@@ -1,4 +1,5 @@
 import re
+import time
 import requests
 
 HEADERS = {
@@ -6,33 +7,8 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-# 🔑 KLJUČNI SIGNALI (brand-identitet)
-SIGNATURE_TOKENS = [
-    "encrypted",
-    "money",
-    "code",
-    "ethan",
-    "rothwell",
-]
-
-EXACT_TITLE = "encrypted money code by ethan rothwell"
-
-POWER_PHRASES = [
-    "changed my life",
-    "change your life",
-    "transform your life",
-    "game changer",
-    "another level",
-    "hidden information",
-    "unfair advantage",
-    "page 13",
-    "not random",
-    "plot twist",
-]
-
-STATIC_BUFFER = 5
-PERCENT_BUFFER = 0.20
-
+# 🧠 MINIMALNI SIGNALI (namjerno široko)
+REQUIRED_WORDS = ["encrypted", "money"]
 
 def normalize(text: str) -> str:
     text = (text or "").lower()
@@ -53,11 +29,11 @@ def extract_video_id(url: str):
     return m.group(1) if m else None
 
 
-def fetch_comments(video_id: str):
+def fetch_comments(video_id: str, pages=6):
     comments = []
     cursor = 0
 
-    for _ in range(8):  # do ~400 komentara
+    for _ in range(pages):
         params = {
             "aid": 1988,
             "count": 50,
@@ -89,32 +65,34 @@ def fetch_comments(video_id: str):
     return comments
 
 
-def score_comment(text_norm: str) -> int:
-    score = 0
+def find_candidate(comments):
+    """
+    Pronađe NAJJEDNOSTAVNIJI match:
+    - mora sadržavati 'encrypted' i 'money'
+    - bira onaj sa najviše lajkova
+    """
+    best = None
+    top_likes = 0
 
-    # 🟢 EXACT TITLE — instant hit
-    if EXACT_TITLE in text_norm:
-        return 500
+    for c in comments:
+        text = c.get("text") or ""
+        likes = int(c.get("digg_count") or 0)
+        text_norm = normalize(text)
 
-    token_hits = sum(1 for t in SIGNATURE_TOKENS if t in text_norm)
+        if not all(w in text_norm for w in REQUIRED_WORDS):
+            continue
 
-    # 🟡 Realni prag: 3/5 + encrypted & money
-    if token_hits >= 3 and "encrypted" in text_norm and "money" in text_norm:
-        score += 120 + token_hits * 20
+        if not best or likes > best["likes"]:
+            best = {
+                "cid": c.get("cid"),
+                "likes": likes,
+                "username": c.get("user", {}).get("unique_id"),
+                "text": text,
+            }
 
-    # 🔵 Strong case 4–5 tokena
-    if token_hits >= 4:
-        score += 150 + token_hits * 25
+        top_likes = max(top_likes, likes)
 
-    for p in POWER_PHRASES:
-        if p in text_norm:
-            score += 30
-
-    return score
-
-
-def apply_buffer(likes: int) -> int:
-    return likes + max(STATIC_BUFFER, int(likes * PERCENT_BUFFER))
+    return best, top_likes
 
 
 def find_target_comment(video_url: str) -> dict:
@@ -122,67 +100,31 @@ def find_target_comment(video_url: str) -> dict:
     video_id = extract_video_id(video_url)
 
     if not video_id:
-        return {"found": False}
+        return {"found": False, "reason": "no_video_id"}
 
-    comments = fetch_comments(video_id)
-    if not comments:
-        return {"found": False}
+    # 🔁 2 pokušaja (TikTok API zna kasniti)
+    for attempt in range(2):
+        comments = fetch_comments(video_id)
 
-    best = None
-    best_score = 0
-    top_likes = 0
-    fallback = []
+        if comments:
+            best, top_likes = find_candidate(comments)
 
-    for c in comments:
-        text = c.get("text") or ""
-        likes = int(c.get("digg_count") or 0)
-        text_norm = normalize(text)
-
-        top_likes = max(top_likes, likes)
-
-        # ⚡ FAST FILTER — bez ovoga ne idemo dalje
-        if "encrypted" not in text_norm or "money" not in text_norm:
-            continue
-
-        score = score_comment(text_norm)
-
-        if "encrypted money code" in text_norm:
-            fallback.append((likes, c))
-
-        if score > 0:
-            if (
-                not best
-                or score > best_score
-                or (score == best_score and likes > best["likes"])
-            ):
-                best = {
-                    "cid": c.get("cid"),
-                    "likes": likes,
-                    "username": c.get("user", {}).get("unique_id"),
-                    "text": text,
+            if best:
+                return {
+                    "found": True,
+                    "video_id": video_id,
+                    "my_cid": best["cid"],
+                    "my_likes": best["likes"],
+                    "top_likes": top_likes,
+                    "username": best["username"],
+                    "matched_text": best["text"],
+                    "attempt": attempt + 1,
                 }
-                best_score = score
 
-    # 🔥 LAST RESORT
-    if not best and fallback:
-        likes, c = max(fallback, key=lambda x: x[0])
-        best = {
-            "cid": c.get("cid"),
-            "likes": likes,
-            "username": c.get("user", {}).get("unique_id"),
-            "text": c.get("text"),
-        }
-
-    if not best:
-        return {"found": False}
+        time.sleep(8)  # kratki delay prije retry-a
 
     return {
-        "found": True,
+        "found": False,
+        "reason": "no_match_after_retry",
         "video_id": video_id,
-        "my_cid": best["cid"],
-        "my_likes": apply_buffer(best["likes"]),
-        "top_likes": top_likes,
-        "username": best["username"],
-        "matched_text": best["text"],
-        "confidence_score": best_score,
     }
