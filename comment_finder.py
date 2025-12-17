@@ -7,8 +7,13 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-# 🧠 MINIMALNI SIGNALI (namjerno široko)
 REQUIRED_WORDS = ["encrypted", "money"]
+
+REQUEST_TIMEOUT = 8
+MAX_PAGES = 4
+RETRY_COUNT = 2
+RETRY_DELAY = 8
+
 
 def normalize(text: str) -> str:
     text = (text or "").lower()
@@ -18,7 +23,7 @@ def normalize(text: str) -> str:
 
 def expand_url(url: str) -> str:
     try:
-        r = requests.get(url, headers=HEADERS, allow_redirects=True, timeout=10)
+        r = requests.get(url, headers=HEADERS, allow_redirects=True, timeout=REQUEST_TIMEOUT)
         return r.url
     except Exception:
         return url
@@ -29,25 +34,24 @@ def extract_video_id(url: str):
     return m.group(1) if m else None
 
 
-def fetch_comments(video_id: str, pages=6):
+def fetch_comments(video_id: str):
     comments = []
     cursor = 0
 
-    for _ in range(pages):
-        params = {
-            "aid": 1988,
-            "count": 50,
-            "cursor": cursor,
-            "aweme_id": video_id,
-        }
-
+    for _ in range(MAX_PAGES):
         try:
             r = requests.get(
                 "https://www.tiktok.com/api/comment/list/",
                 headers=HEADERS,
-                params=params,
-                timeout=10
+                params={
+                    "aid": 1988,
+                    "count": 50,
+                    "cursor": cursor,
+                    "aweme_id": video_id,
+                },
+                timeout=REQUEST_TIMEOUT,
             )
+
             if r.status_code != 200:
                 break
 
@@ -59,38 +63,37 @@ def fetch_comments(video_id: str, pages=6):
                 break
 
             cursor = int(data.get("cursor") or 0)
+
         except Exception:
             break
 
     return comments
 
 
-def find_candidate(comments):
-    """
-    Pronađe NAJJEDNOSTAVNIJI match:
-    - mora sadržavati 'encrypted' i 'money'
-    - bira onaj sa najviše lajkova
-    """
+def pick_best_comment(comments):
     best = None
     top_likes = 0
 
     for c in comments:
-        text = c.get("text") or ""
-        likes = int(c.get("digg_count") or 0)
-        text_norm = normalize(text)
+        try:
+            text = c.get("text") or ""
+            likes = int(c.get("digg_count") or 0)
+            text_norm = normalize(text)
 
-        if not all(w in text_norm for w in REQUIRED_WORDS):
+            top_likes = max(top_likes, likes)
+
+            if not all(w in text_norm for w in REQUIRED_WORDS):
+                continue
+
+            if not best or likes > best["likes"]:
+                best = {
+                    "cid": c.get("cid"),
+                    "likes": likes,
+                    "username": c.get("user", {}).get("unique_id"),
+                    "text": text,
+                }
+        except Exception:
             continue
-
-        if not best or likes > best["likes"]:
-            best = {
-                "cid": c.get("cid"),
-                "likes": likes,
-                "username": c.get("user", {}).get("unique_id"),
-                "text": text,
-            }
-
-        top_likes = max(top_likes, likes)
 
     return best, top_likes
 
@@ -102,12 +105,11 @@ def find_target_comment(video_url: str) -> dict:
     if not video_id:
         return {"found": False, "reason": "no_video_id"}
 
-    # 🔁 2 pokušaja (TikTok API zna kasniti)
-    for attempt in range(2):
+    for attempt in range(RETRY_COUNT):
         comments = fetch_comments(video_id)
 
         if comments:
-            best, top_likes = find_candidate(comments)
+            best, top_likes = pick_best_comment(comments)
 
             if best:
                 return {
@@ -121,10 +123,6 @@ def find_target_comment(video_url: str) -> dict:
                     "attempt": attempt + 1,
                 }
 
-        time.sleep(8)  # kratki delay prije retry-a
+        time.sleep(RETRY_DELAY)
 
-    return {
-        "found": False,
-        "reason": "no_match_after_retry",
-        "video_id": video_id,
-    }
+    return {"found": False, "reason": "no_match"}
