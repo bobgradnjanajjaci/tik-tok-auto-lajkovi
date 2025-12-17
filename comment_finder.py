@@ -2,17 +2,17 @@ import re
 import time
 import requests
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
-}
+HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 REQUIRED_WORDS = ["encrypted", "money"]
 
-REQUEST_TIMEOUT = 8
-MAX_PAGES = 4
-RETRY_COUNT = 2
-RETRY_DELAY = 8
+# ✅ Web-safe (manje poziva = manje crash)
+REQUEST_TIMEOUT = 6
+MAX_PAGES = 3          # 150 komentara (za web dovoljno)
+RETRY_COUNT = 1        # web: 1 retry max
+RETRY_DELAY = 4
+
+_session = requests.Session()
 
 
 def normalize(text: str) -> str:
@@ -22,11 +22,19 @@ def normalize(text: str) -> str:
 
 
 def expand_url(url: str) -> str:
-    try:
-        r = requests.get(url, headers=HEADERS, allow_redirects=True, timeout=REQUEST_TIMEOUT)
-        return r.url
-    except Exception:
+    # ✅ Ako već ima /video/ ne troši request
+    if "/video/" in url:
         return url
+    try:
+        # HEAD je brži nego GET (često)
+        r = _session.head(url, headers=HEADERS, allow_redirects=True, timeout=REQUEST_TIMEOUT)
+        return r.url or url
+    except Exception:
+        try:
+            r = _session.get(url, headers=HEADERS, allow_redirects=True, timeout=REQUEST_TIMEOUT)
+            return r.url
+        except Exception:
+            return url
 
 
 def extract_video_id(url: str):
@@ -40,18 +48,12 @@ def fetch_comments(video_id: str):
 
     for _ in range(MAX_PAGES):
         try:
-            r = requests.get(
+            r = _session.get(
                 "https://www.tiktok.com/api/comment/list/",
                 headers=HEADERS,
-                params={
-                    "aid": 1988,
-                    "count": 50,
-                    "cursor": cursor,
-                    "aweme_id": video_id,
-                },
+                params={"aid": 1988, "count": 50, "cursor": cursor, "aweme_id": video_id},
                 timeout=REQUEST_TIMEOUT,
             )
-
             if r.status_code != 200:
                 break
 
@@ -63,7 +65,6 @@ def fetch_comments(video_id: str):
                 break
 
             cursor = int(data.get("cursor") or 0)
-
         except Exception:
             break
 
@@ -82,10 +83,11 @@ def pick_best_comment(comments):
 
             top_likes = max(top_likes, likes)
 
+            # “glup ali radi”
             if not all(w in text_norm for w in REQUIRED_WORDS):
                 continue
 
-            if not best or likes > best["likes"]:
+            if (not best) or (likes > best["likes"]):
                 best = {
                     "cid": c.get("cid"),
                     "likes": likes,
@@ -105,12 +107,11 @@ def find_target_comment(video_url: str) -> dict:
     if not video_id:
         return {"found": False, "reason": "no_video_id"}
 
-    for attempt in range(RETRY_COUNT):
+    for attempt in range(RETRY_COUNT + 1):  # 1 + retry
         comments = fetch_comments(video_id)
 
         if comments:
             best, top_likes = pick_best_comment(comments)
-
             if best:
                 return {
                     "found": True,
@@ -123,6 +124,7 @@ def find_target_comment(video_url: str) -> dict:
                     "attempt": attempt + 1,
                 }
 
-        time.sleep(RETRY_DELAY)
+        if attempt < RETRY_COUNT:
+            time.sleep(RETRY_DELAY)
 
     return {"found": False, "reason": "no_match"}
