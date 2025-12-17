@@ -1,26 +1,35 @@
+import time
+import requests
 from comment_finder import find_target_comment
 from like_rules import calculate_target_likes
 
-def process_video(video_url: str):
+LIKE_APP_URL = "https://lajkovi-crtica-lajkovi.up.railway.app/"
+
+def process_video(video_url: str) -> dict:
     result = find_target_comment(video_url)
+
+    if not result.get("found"):
+        time.sleep(2)
+        result = find_target_comment(video_url)
 
     if not result.get("found"):
         return {"status": "error", "message": "Komentar nije pronađen"}
 
     target = calculate_target_likes(result["top_likes"])
-    if target == 0:
-        return {"status": "skip", "message": "Top komentar prejak – ne šaljem"}
-
-    my_likes = int(result.get("my_likes") or 0)
-    to_send = max(0, target - my_likes)
+    to_send = max(0, target - result["my_likes"])
 
     if to_send <= 0:
-        return {"status": "ok", "message": "Dovoljno lajkova"}
+        return {"status": "skip", "message": "Dovoljno lajkova"}
+
+    payload = {
+        "orders": f"{video_url} {result['username']} {to_send}"
+    }
+
+    r = requests.post(LIKE_APP_URL, data=payload, timeout=20)
 
     return {
-        "status": "ok",
-        "video_id": result["video_id"],
-        "cid": result["my_cid"],
+        "status": "sent",
+        "likes": to_send,
         "username": result["username"],
-        "send_likes": to_send,
+        "response": r.text[:200]
     }
