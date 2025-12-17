@@ -6,6 +6,7 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# 🔑 KLJUČNI SIGNALI (brand-identitet)
 SIGNATURE_TOKENS = [
     "encrypted",
     "money",
@@ -18,16 +19,15 @@ EXACT_TITLE = "encrypted money code by ethan rothwell"
 
 POWER_PHRASES = [
     "changed my life",
-    "it changed my life",
     "change your life",
-    "you need this book",
-    "need right now",
+    "transform your life",
     "game changer",
     "another level",
     "hidden information",
+    "unfair advantage",
+    "page 13",
     "not random",
     "plot twist",
-    "page 13",
 ]
 
 STATIC_BUFFER = 5
@@ -57,7 +57,7 @@ def fetch_comments(video_id: str):
     comments = []
     cursor = 0
 
-    for _ in range(8):  # ⬅️ povećano na 400 komentara
+    for _ in range(8):  # do ~400 komentara
         params = {
             "aid": 1988,
             "count": 50,
@@ -92,23 +92,23 @@ def fetch_comments(video_id: str):
 def score_comment(text_norm: str) -> int:
     score = 0
 
-    # 🥇 EXACT TITLE – NE MOŽE PROMAŠITI
+    # 🟢 EXACT TITLE — instant hit
     if EXACT_TITLE in text_norm:
-        score += 300
+        return 500
 
     token_hits = sum(1 for t in SIGNATURE_TOKENS if t in text_norm)
 
-    # 🔹 3/5 tokena ali mora imati encrypted + money
+    # 🟡 Realni prag: 3/5 + encrypted & money
     if token_hits >= 3 and "encrypted" in text_norm and "money" in text_norm:
-        score += 120 + token_hits * 15
+        score += 120 + token_hits * 20
 
-    # 🔹 stari strong case
+    # 🔵 Strong case 4–5 tokena
     if token_hits >= 4:
-        score += 150 + token_hits * 20
+        score += 150 + token_hits * 25
 
     for p in POWER_PHRASES:
         if p in text_norm:
-            score += 25
+            score += 30
 
     return score
 
@@ -131,8 +131,7 @@ def find_target_comment(video_url: str) -> dict:
     best = None
     best_score = 0
     top_likes = 0
-
-    fallback_candidates = []
+    fallback = []
 
     for c in comments:
         text = c.get("text") or ""
@@ -140,10 +139,15 @@ def find_target_comment(video_url: str) -> dict:
         text_norm = normalize(text)
 
         top_likes = max(top_likes, likes)
+
+        # ⚡ FAST FILTER — bez ovoga ne idemo dalje
+        if "encrypted" not in text_norm or "money" not in text_norm:
+            continue
+
         score = score_comment(text_norm)
 
         if "encrypted money code" in text_norm:
-            fallback_candidates.append((likes, c))
+            fallback.append((likes, c))
 
         if score > 0:
             if (
@@ -159,9 +163,9 @@ def find_target_comment(video_url: str) -> dict:
                 }
                 best_score = score
 
-    # 🔥 LAST RESORT FALLBACK
-    if not best and fallback_candidates:
-        likes, c = max(fallback_candidates, key=lambda x: x[0])
+    # 🔥 LAST RESORT
+    if not best and fallback:
+        likes, c = max(fallback, key=lambda x: x[0])
         best = {
             "cid": c.get("cid"),
             "likes": likes,
