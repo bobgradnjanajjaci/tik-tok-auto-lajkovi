@@ -1,40 +1,44 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, jsonify, render_template_string
+import time
+import requests
+
 from auto_brain_core import process_video
 
 app = Flask(__name__)
+
+# ✅ Web zaštita (da ne ubije worker)
+MAX_LINKS_PER_RUN = 6
+SLEEP_BETWEEN_LINKS = 1.2
 
 HTML = """
 <!doctype html>
 <html>
 <head>
-  <title>TikTok Auto Likes</title>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Encrypted Money Code - Auto Likes</title>
   <style>
-    *{box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-    body{margin:0;background:radial-gradient(circle at top,#1f2937 0,#020617 55%);color:#e5e7eb;min-height:100vh;display:flex;align-items:center;justify-content:center}
-    .card{width:100%;max-width:980px;background:rgba(15,23,42,.96);border:1px solid rgba(148,163,184,.35);border-radius:16px;box-shadow:0 20px 50px rgba(15,23,42,.9);padding:22px}
-    h2{margin:0 0 6px;font-size:20px;text-transform:uppercase;letter-spacing:.04em}
-    p{margin:0 0 14px;color:#9ca3af;font-size:13px}
-    label{font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em}
-    textarea{width:100%;min-height:220px;margin-top:6px;background:rgba(15,23,42,.85);border:1px solid rgba(55,65,81,.9);border-radius:10px;padding:10px;color:#e5e7eb;font-size:13px;resize:vertical}
-    button{margin-top:12px;cursor:pointer;padding:10px 18px;border-radius:999px;border:none;font-weight:700;text-transform:uppercase;letter-spacing:.03em;background:linear-gradient(90deg,#6366f1,#a855f7);color:white;box-shadow:0 8px 22px rgba(79,70,229,.6)}
-    pre{margin-top:12px;background:rgba(15,23,42,.9);border:1px solid rgba(55,65,81,.9);border-radius:10px;padding:10px;max-height:320px;overflow:auto;font-size:11px;white-space:pre-wrap}
+    body{font-family:system-ui;background:#0b1220;color:#e5e7eb;display:flex;justify-content:center;padding:24px}
+    .card{width:100%;max-width:900px;background:#0f172a;border:1px solid #334155;border-radius:16px;padding:18px}
+    textarea{width:100%;min-height:220px;background:#0b1220;color:#e5e7eb;border:1px solid #334155;border-radius:12px;padding:12px}
+    button{margin-top:10px;padding:10px 16px;border-radius:999px;border:none;background:#6366f1;color:white;font-weight:700;cursor:pointer}
+    .hint{color:#94a3b8;font-size:12px;margin-top:8px;line-height:1.4}
+    pre{white-space:pre-wrap;background:#0b1220;border:1px solid #334155;border-radius:12px;padding:12px;margin-top:14px}
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>TikTok Auto Likes</h2>
-    <p>Ubaci TikTok video linkove (jedan po liniji). Sistem automatski nađe keyword komentar i pošalje lajkove.</p>
-
+    <h2>Encrypted Money Code - Auto Likes</h2>
+    <div class="hint">
+      Paste linkove (1 po liniji). Web limit: <b>{{max_links}}</b> po run-u da Railway ne puca.
+    </div>
     <form method="post">
-      <label>Video links</label>
-      <textarea name="links" placeholder="https://www.tiktok.com/@user/video/123...&#10;https://www.tiktok.com/@user/video/456...">{{ links or '' }}</textarea>
-      <button type="submit">🚀 Send Auto Likes</button>
+      <textarea name="links" placeholder="https://www.tiktok.com/t/Z...">{{links or ""}}</textarea>
+      <button type="submit">Run</button>
     </form>
 
-    {% if log %}
-      <pre>{{ log }}</pre>
+    {% if out %}
+      <pre>{{out}}</pre>
     {% endif %}
   </div>
 </body>
@@ -43,18 +47,44 @@ HTML = """
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    links = ""
-    log_lines = []
+    links_text = ""
+    out_lines = []
 
     if request.method == "POST":
-        links = request.form.get("links", "")
-        lines = [l.strip() for l in links.splitlines() if l.strip()]
+        links_text = request.form.get("links", "")
+        raw_links = [l.strip() for l in links_text.splitlines() if l.strip()]
 
-        for url in lines:
-            res = process_video(url)
-            log_lines.append(f"{url} -> {res}")
+        if len(raw_links) > MAX_LINKS_PER_RUN:
+            raw_links = raw_links[:MAX_LINKS_PER_RUN]
+            out_lines.append(f"[INFO] Skraćeno na {MAX_LINKS_PER_RUN} linkova (web safe mode).")
 
-    return render_template_string(HTML, links=links, log="\n".join(log_lines))
+        for i, url in enumerate(raw_links, start=1):
+            try:
+                res = process_video(url)
+                out_lines.append(f"{i}) {url} -> {res}")
+            except Exception as e:
+                # ✅ Nikad ne ruši cijeli request
+                out_lines.append(f"{i}) {url} -> {{'status':'error','message':'{type(e).__name__}: {e}'}}")
 
-if __name__ == "__main__":
-    app.run(debug=True)
+            time.sleep(SLEEP_BETWEEN_LINKS)
+
+    return render_template_string(HTML, links=links_text, out="\n".join(out_lines), max_links=MAX_LINKS_PER_RUN)
+
+
+@app.route("/api/run", methods=["POST"])
+def api_run():
+    data = request.get_json(force=True, silent=True) or {}
+    urls = data.get("links") or []
+    urls = [u.strip() for u in urls if isinstance(u, str) and u.strip()]
+
+    urls = urls[:MAX_LINKS_PER_RUN]
+
+    results = []
+    for url in urls:
+        try:
+            results.append({"url": url, "result": process_video(url)})
+        except Exception as e:
+            results.append({"url": url, "result": {"status": "error", "message": f"{type(e).__name__}: {e}"}})
+        time.sleep(SLEEP_BETWEEN_LINKS)
+
+    return jsonify({"ok": True, "results": results})
