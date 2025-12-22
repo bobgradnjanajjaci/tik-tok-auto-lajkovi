@@ -26,7 +26,6 @@ def expand_url(url: str) -> str:
     if "/video/" in url:
         return url
     try:
-        # HEAD je brži nego GET (često)
         r = _session.head(url, headers=HEADERS, allow_redirects=True, timeout=REQUEST_TIMEOUT)
         return r.url or url
     except Exception:
@@ -72,10 +71,16 @@ def fetch_comments(video_id: str):
 
 
 def pick_best_comment(comments):
+    """
+    🔐 ANTI-RESTRICTED:
+    gledamo SAMO prvih 50 komentara koje TikTok vrati
+    """
+    visible_comments = comments[:50]   # 👈 OVO JE NOVO
+
     best = None
     top_likes = 0
 
-    for c in comments:
+    for c in visible_comments:          # 👈 umjesto `for c in comments`
         try:
             text = c.get("text") or ""
             likes = int(c.get("digg_count") or 0)
@@ -83,7 +88,7 @@ def pick_best_comment(comments):
 
             top_likes = max(top_likes, likes)
 
-            # “glup ali radi”
+            # “glup ali radi” keyword check
             if not all(w in text_norm for w in REQUIRED_WORDS):
                 continue
 
@@ -107,7 +112,7 @@ def find_target_comment(video_url: str) -> dict:
     if not video_id:
         return {"found": False, "reason": "no_video_id"}
 
-    for attempt in range(RETRY_COUNT + 1):  # 1 + retry
+    for attempt in range(RETRY_COUNT + 1):
         comments = fetch_comments(video_id)
 
         if comments:
